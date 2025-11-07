@@ -462,6 +462,9 @@ with tab3:
 # -------------------------
 # TAB 4 – Customer & Regional Insights
 # -------------------------
+# -------------------------
+# TAB 4 – Customer & Regional Insights
+# -------------------------
 with tab4:
     st.header("Customer & Regional Insights Dashboard")
 
@@ -469,25 +472,42 @@ with tab4:
     df_paid = df_enriched[df_enriched.get("order_status") == "delivered"].copy() \
         if "order_status" in df_enriched.columns else df_enriched.iloc[0:0].copy()
 
-    # --- Merge customer info if available ---
-    if not df_customers.empty and "customer_id" in df_customers.columns:
-        df_paid = df_paid.merge(
-            df_customers[["customer_id", "customer_city", "customer_state"]].drop_duplicates("customer_id"),
-            on="customer_id",
-            how="left"
-        )
+    # --- Merge customer info (ensure proper join key) ---
+    if not df_customers.empty:
+        if "customer_id" in df_customers.columns and "customer_id" in df_paid.columns:
+            join_key = "customer_id"
+        elif "customer_unique_id" in df_customers.columns and "customer_id" in df_paid.columns:
+            join_key = "customer_unique_id"
+            df_customers = df_customers.rename(columns={"customer_unique_id": "customer_id"})
+        else:
+            join_key = None
+            st.warning("⚠️ No matching customer ID column found between df_paid and df_customers.")
+
+        if join_key:
+            df_paid = df_paid.merge(
+                df_customers[["customer_id", "customer_city", "customer_state"]].drop_duplicates("customer_id"),
+                on="customer_id",
+                how="left"
+            )
 
     # --- Ensure essential columns exist ---
     if "customer_state" not in df_paid.columns:
         df_paid["customer_state"] = "Unknown"
+    else:
+        df_paid["customer_state"] = df_paid["customer_state"].fillna("Unknown")
+
     if "segment" not in df_paid.columns:
         segments = ["Consumer", "Corporate", "Home Office"]
         df_paid["segment"] = np.random.choice(segments, size=len(df_paid))
+
     if "payment_value" not in df_paid.columns:
         df_paid["payment_value"] = 0.0
 
     # --- Convert timestamps to months ---
-    df_paid["month"] = pd.to_datetime(df_paid.get("order_purchase_timestamp"), errors="coerce").dt.to_period("M").astype(str)
+    if "order_purchase_timestamp" in df_paid.columns:
+        df_paid["month"] = pd.to_datetime(df_paid["order_purchase_timestamp"], errors="coerce").dt.to_period("M").astype(str)
+    else:
+        df_paid["month"] = "Unknown"
 
     # --- Metrics ---
     total_customers = df_customers["customer_unique_id"].nunique() \
@@ -497,21 +517,30 @@ with tab4:
     total_sales_paid = df_paid["payment_value"].sum() if "payment_value" in df_paid.columns else 0.0
     total_orders_enriched = len(df_enriched)
     avg_order_value = (total_sales_paid / len(df_paid)) if len(df_paid) > 0 else 0.0
-    customer_ltv = avg_order_value * 5  # demo assumption
+    customer_ltv = avg_order_value * 5  # simple assumption
 
-    # --- Top customer and region ---
+    # --- Top customer and top region ---
     top_customer = "N/A"
     if len(df_paid) > 0 and "customer_id" in df_paid.columns and "payment_value" in df_paid.columns:
-        top_customer = df_paid.groupby("customer_id", observed=True)["payment_value"].sum().idxmax()
+        try:
+            top_customer = df_paid.groupby("customer_id", observed=True)["payment_value"].sum().idxmax()
+        except Exception:
+            top_customer = "N/A"
+
     top_region = "N/A"
     if "customer_state" in df_paid.columns and len(df_paid) > 0:
-        try:
-            top_region = df_paid.groupby("customer_state", observed=True)["payment_value"].sum().idxmax()
-        except Exception:
-            top_region = "N/A"
+        valid_regions = df_paid[df_paid["customer_state"] != "Unknown"]
+        if not valid_regions.empty:
+            try:
+                top_region = valid_regions.groupby("customer_state", observed=True)["payment_value"].sum().idxmax()
+            except Exception:
+                top_region = "N/A"
+        else:
+            top_region = "Unknown"
 
-    returning_rate = 20.0  # simulated
+    returning_rate = 20.0  # simulated rate for demo
 
+    # --- KPI Section ---
     col1, col2, col3, col4, col5, col6 = st.columns(6)
     col1.metric("Total Customers", total_customers)
     col2.metric("Top Customer (by Sales)",
@@ -523,23 +552,52 @@ with tab4:
 
     st.markdown("---")
 
-    # --- 1) Donut: Sales by Segment ---
-    sales_seg = df_paid.groupby("segment", observed=True)["payment_value"].sum().reset_index()
-    fig_seg = px.pie(sales_seg, values="payment_value", names="segment", hole=0.3, title="Sales by Segment")
-    st.plotly_chart(fig_seg, width="stretch")
+    # --- 1) Donut Chart: Sales by Segment ---
+    if "segment" in df_paid.columns and not df_paid.empty:
+        sales_seg = df_paid.groupby("segment", observed=True)["payment_value"].sum().reset_index()
+        if not sales_seg.empty:
+            fig_seg = px.pie(
+                sales_seg,
+                values="payment_value",
+                names="segment",
+                hole=0.3,
+                title="Sales by Segment"
+            )
+            st.plotly_chart(fig_seg, width="stretch")
+        else:
+            st.info("No sales data available for segment chart.")
+    else:
+        st.info("No segment information found for customers.")
 
     # --- 2) Top 10 Customers by Profit (20% margin) ---
-    cust_profit = df_paid.groupby("customer_id", observed=True)["payment_value"].sum() * 0.20
-    top_cust = cust_profit.nlargest(10).reset_index(name="Profit")
-    fig_topcust = px.bar(top_cust, x="customer_id", y="Profit", title="Top 10 Customers by Profit")
-    st.plotly_chart(fig_topcust, width="stretch")
+    if "payment_value" in df_paid.columns and len(df_paid) > 0:
+        cust_profit = df_paid.groupby("customer_id", observed=True)["payment_value"].sum() * 0.20
+        top_cust = cust_profit.nlargest(10).reset_index(name="Profit")
+        if not top_cust.empty:
+            fig_topcust = px.bar(
+                top_cust,
+                x="customer_id",
+                y="Profit",
+                title="Top 10 Customers by Profit",
+                labels={"Profit": "Profit (R$)", "customer_id": "Customer ID"}
+            )
+            st.plotly_chart(fig_topcust, width="stretch")
+        else:
+            st.info("Not enough data for customer profit chart.")
+    else:
+        st.info("Payment data missing for profit analysis.")
 
-    # --- 3) Customer retention (simulated trend) ---
+    # --- 3) Customer Retention (Simulated Trend) ---
     retention = pd.DataFrame({
         "Month": pd.period_range(start="2024-01", periods=6, freq="M").astype(str),
         "Retention": [50, 55, 60, 58, 62, 65]
     })
-    fig_ret = px.line(retention, x="Month", y="Retention", title="Customer Retention Over Time",
-                      labels={"Retention": "Retention Rate (%)"})
+    fig_ret = px.line(
+        retention,
+        x="Month",
+        y="Retention",
+        title="Customer Retention Over Time",
+        labels={"Retention": "Retention Rate (%)"}
+    )
     st.plotly_chart(fig_ret, width="stretch")
 
