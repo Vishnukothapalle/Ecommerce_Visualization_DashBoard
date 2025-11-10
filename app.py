@@ -225,18 +225,7 @@ with tab1:
         st.info("Processing time / month data not available.")
 
     # 2) Avg processing time by order_status
-    if "order_status" in df_enriched.columns and "processing_time_days" in df_enriched.columns:
-        delivery_times = (
-            df_enriched.dropna(subset=["order_status", "processing_time_days"])
-            .groupby("order_status", observed=True)["processing_time_days"]
-            .mean()
-            .reset_index(name="avg_delivery_time")
-        )
-        if not delivery_times.empty:
-            fig2 = px.bar(delivery_times, x="order_status", y="avg_delivery_time",
-                          title="Average Processing Time by Order Status",
-                          labels={"order_status": "Order Status", "avg_delivery_time": "Average Days"})
-            st.plotly_chart(fig2, width="stretch")
+
     # 3) Order count by status
     if "order_status" in df_orders.columns:
         order_status_counts = df_orders["order_status"].value_counts().reset_index()
@@ -545,7 +534,6 @@ with tab4:
     col1.metric("Total Customers", total_customers)
     col2.metric("Top Customer (by Sales)",
                 str(top_customer)[:10] + "..." if isinstance(top_customer, str) and len(str(top_customer)) > 10 else str(top_customer))
-    col3.metric("Top Region (by Revenue)", top_region)
     col4.metric("Returning Customer Rate %", f"{returning_rate:.2f}%")
     col5.metric("Avg Order Value", f"R${avg_order_value:.2f}")
     col6.metric("Customer LTV Estimate", f"R${customer_ltv:.2f}")
